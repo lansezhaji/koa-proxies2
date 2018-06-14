@@ -1,0 +1,42 @@
+{
+  "name": "koa-proxies2",
+  "version": "0.0.1",
+  "description": "koa-proxy2 post bug fix",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lansezhaji/koa-proxies2.git"
+  },
+  "keywords": [
+    "proxy",
+    "nginx",
+    "angular"
+  ],
+  "author": "lansezhaji",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/lansezhaji/koa-proxies2.git/issues"
+  },
+  "homepage": "https://github.com/lansezhaji/koa-proxies2.git",
+  "dependencies": {
+    "co-body": "^2.0.0",
+    "formidable": "^1.0.17",
+    "request": "^2.56.0",
+    "thunkify": "^2.1.2",
+    "underscore": "^1.8.3"
+  },
+  "devDependencies": {
+    "express": "^4.12.4",
+    "istanbul-harmony": "^0.3.12",
+    "koa": "^0.21.0",
+    "mocha": "^2.2.5",
+    "should": "^6.0.3",
+    "sinon": "^1.14.1",
+    "superagent": "^1.2.0"
+  },
+  "scripts": {
+    "test": "mocha --harmony --reporter spec",
+    "test-visual": "node --harmony ./node_modules/.bin/istanbul cover ./node_modules/.bin/_mocha --report html",
+    "test-travis": "node --harmony ./node_modules/.bin/istanbul cover ./node_modules/.bin/_mocha --report lcovonly"
+  }
+}
