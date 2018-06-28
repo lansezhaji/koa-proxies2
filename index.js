@@ -1,66 +1,136 @@
-"use strict";
+'use strict';
 
-var util =require('util');
-var thunkify = require('thunkify');
-var request = thunkify(require('request'));
-var _ = require('underscore');
-var utils = require('./utils/utils.js');
+var join = require('url').resolve;
+var iconv = require('iconv-lite');
+var coRequest = require('co-request');
 
-/**
- * @typedef {!Object} ProxyRule
- * @property {(string|RegExp)} proxy_location - URL match rule for specific path request proxy
- * @property {string} proxy_pass - target backend, different between with URL or not
- */
-
-/**
- * A module proxy requests with nginx style
- * @version v0.11.0
- * @author bornkiller <hjj491229492@hotmail.com>
- * @license MIT
- * @copyright bornkiller NPM package 2014
- */
-
-/**
- * @description A module proxy requests with nginx style
- * @module koa-proxy2
- * @requires utils
- * @param {Object} options - proxy config definition
- * @returns {Function} - generator function act koa middleware
- */
 module.exports = function(options) {
-  options = _.defaults(options || {}, {
-    body_parse: true,
-    keep_query_string: true,
-    proxy_timeout: 3000,
-    proxy_methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    proxy_rules: []
-  });
+  options || (options = {});
+  var request = coRequest.defaults({ jar: options.jar === true });
 
-  return function* (next) {
-    // transfer request next when rules, methods mismatch
-    if (utils.shouldSkipNext(this, options)) return yield next;
+  if (!(options.host || options.map || options.url)) {
+    throw new Error('miss options');
+  }
 
-    // alias for koa context
-    var self = this
-      , opts;
+  return function* proxy(next) {
+    var url = resolve(this.path, options);
 
-    // skip body parse when parsed or disabled
-    if (utils.shouldParseBody(self, options)) this.request.body = yield utils.execParseBody(self, false);
+    // don't match
+    if (!url) {
+      return yield* next;
+    }
+    // 判断是否有重新
+    if (options.rewrite) {
+      for(let ur in options.rewrite){
+        url = url.replace(ur,options.rewrite[ur]);
+      }
+    }
 
-    // respond error when occur in body parse
-    if (util.isError(this.request.body)) return this.status = 500;
+    // if match option supplied, restrict proxy to that match
+    if (options.match) {
+      if (!this.path.match(options.match)) {
+        return yield* next;
+      }
+    }
 
-    opts = utils.configRequestOptions(self, options);
+    var parsedBody = getParsedBody(this);
 
-    delete(opts.headers["content-length"]);
-    delete(opts.headers["host"]);
-    delete(opts.headers["accept-encoding"]);
-    // comply the proxy
-    var response = yield request(opts);
+    var opt = {
+      url: url + (this.querystring ? '?' + this.querystring : ''),
+      headers: this.header,
+      encoding: null,
+      followRedirect: options.followRedirect === false ? false : true,
+      method: this.method,
+      body: parsedBody,
+    };
 
-    // respond client
-    this.status = response[0].statusCode;
-    this.set(response[0].headers);
-    this.body = response[0].body;
+    // set 'Host' header to options.host (without protocol prefix), strip trailing slash
+    if (options.host) opt.headers.host = options.host.slice(options.host.indexOf('://')+3).replace(/\/$/,'');
+
+
+    if (options.requestOptions) {
+      if (typeof options.requestOptions === 'function') {
+        opt = options.requestOptions(this.request, opt);
+      } else {
+        Object.keys(options.requestOptions).forEach(function (option) { opt[option] = options.requestOptions[option]; });
+      }
+    }
+
+    var requestThunk = request(opt);
+
+    if (parsedBody) {
+      var res = yield requestThunk;
+    } else {
+      // Is there a better way?
+      // https://github.com/leukhin/co-request/issues/11
+      var res = yield pipeRequest(this.req, requestThunk);
+    }
+
+    this.status = res.statusCode;
+    for (var name in res.headers) {
+      // http://stackoverflow.com/questions/35525715/http-get-parse-error-code-hpe-unexpected-content-length
+      if (name === 'transfer-encoding') {
+        continue;
+      }
+      this.set(name, res.headers[name]);
+    }
+
+    if (options.encoding === 'gbk') {
+      this.body = iconv.decode(res.body, 'gbk');
+      return;
+    }
+
+    this.body = res.body;
+
+    if (options.yieldNext) {
+      yield next;
+    }
   };
 };
+
+
+function resolve(path, options) {
+  var url = options.url;
+  if (url) {
+    if (!/^http/.test(url)) {
+      url = options.host ? join(options.host, url) : null;
+    }
+    return ignoreQuery(url);
+  }
+
+  if (typeof options.map === 'object') {
+    if (options.map && options.map[path]) {
+      path = ignoreQuery(options.map[path]);
+    }
+  } else if (typeof options.map === 'function') {
+    path = options.map(path);
+  }
+
+  return options.host ? join(options.host, path) : null;
+}
+
+function ignoreQuery(url) {
+  return url ? url.split('?')[0] : null;
+}
+
+function getParsedBody(ctx){
+  var body = ctx.request.body;
+  if (body === undefined || body === null){
+    return undefined;
+  }
+  var contentType = ctx.request.header['content-type'];
+  if (!Buffer.isBuffer(body) && typeof body !== 'string'){
+    if (contentType && contentType.indexOf('json') !== -1){
+      body = JSON.stringify(body);
+    } else {
+      body = body + '';
+    }
+  }
+  return body;
+}
+
+function pipeRequest(readable, requestThunk){
+  return function(cb){
+    readable.pipe(requestThunk(cb));
+  }
+}
